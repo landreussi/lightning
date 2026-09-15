@@ -38,6 +38,7 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
     };
+    use time::macros::datetime;
     use tower::ServiceExt;
 
     use crate::{
@@ -46,7 +47,6 @@ mod tests {
         error::Error,
         handler::{Handler, node::NodeHandler},
         repository::MockNodeRepository,
-        testing::node,
     };
 
     /// The whole router, backed by a mocked repository.
@@ -78,8 +78,12 @@ mod tests {
     #[tokio::test]
     async fn list_nodes_answers_the_documented_shape() {
         let mut db = MockNodeRepository::new();
-        db.expect_list()
-            .returning(|| Ok(vec![node(Node::ACINQ, "ACINQ", 36_010_516_297)]));
+        db.expect_list().returning(|| {
+            Ok(vec![Node::acinq(
+                36_010_516_297,
+                datetime!(2018-04-05 15:13:42 UTC),
+            )])
+        });
 
         let (status, body) = get(db, "/nodes").await;
 
@@ -99,7 +103,7 @@ mod tests {
     async fn get_node_answers_one_node() {
         let mut db = MockNodeRepository::new();
         db.expect_get()
-            .returning(|key| Ok(Some(node(&key.to_string(), "ACINQ", 1))));
+            .returning(|_| Ok(Some(Node::acinq(1, datetime!(2018-04-05 15:13:42 UTC)))));
 
         let (status, body) = get(db, &format!("/nodes/{}", Node::ACINQ)).await;
 

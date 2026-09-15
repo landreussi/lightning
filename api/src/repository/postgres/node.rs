@@ -119,8 +119,14 @@ impl NodeRepository for PostgresRepository {
 
 #[cfg(test)]
 mod tests {
+    use time::macros::datetime;
+
     use super::*;
-    use crate::{domain::Node, repository::postgres::PostgresRepositoryBuilder, testing::node};
+    use crate::{domain::Node, repository::postgres::PostgresRepositoryBuilder};
+
+    /// Every fixture shares one first-seen date; these tests are about the
+    /// rows, not about the timestamp.
+    const FIRST_SEEN: OffsetDateTime = datetime!(2018-04-05 15:13:42 UTC);
 
     fn repo() -> PostgresRepository {
         // The tests read the same `.env` the binaries do.
@@ -137,7 +143,7 @@ mod tests {
         let repo = repo();
 
         assert_eq!(
-            repo.upsert_many(vec![node(Node::ACINQ, "ACINQ", 36_010_516_297)])
+            repo.upsert_many(vec![Node::acinq(36_010_516_297, FIRST_SEEN)])
                 .await
                 .unwrap(),
             1
@@ -152,9 +158,11 @@ mod tests {
         assert_eq!(stored.capacity.to_string(), "360.10516297");
 
         // Same key, new figures: the row is updated, not duplicated.
-        repo.upsert_many(vec![node(Node::ACINQ, "ACINQ renamed", 1)])
-            .await
-            .unwrap();
+        repo.upsert_many(vec![
+            Node::acinq(1, FIRST_SEEN).with_alias("ACINQ renamed".to_string()),
+        ])
+        .await
+        .unwrap();
 
         let stored = repo
             .get(Node::ACINQ.parse().unwrap())
@@ -172,8 +180,8 @@ mod tests {
 
         let written = repo
             .upsert_many(vec![
-                node(Node::WOS, "first", 1),
-                node(Node::WOS, "second", 2),
+                Node::wos(1, FIRST_SEEN).with_alias("first".to_string()),
+                Node::wos(2, FIRST_SEEN).with_alias("second".to_string()),
             ])
             .await
             .unwrap();
@@ -191,8 +199,8 @@ mod tests {
     async fn list_orders_by_capacity() {
         let repo = repo();
         repo.upsert_many(vec![
-            node(Node::ACINQ, "ACINQ", 36_010_516_297),
-            node(Node::WOS, "WalletOfSatoshi", 1),
+            Node::acinq(36_010_516_297, FIRST_SEEN),
+            Node::wos(1, FIRST_SEEN),
         ])
         .await
         .unwrap();

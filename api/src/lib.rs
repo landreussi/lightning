@@ -23,9 +23,6 @@ pub mod routes;
 pub mod schema;
 pub mod source;
 
-#[cfg(test)]
-pub mod testing;
-
 /// Everything a request needs, handed to the routes as axum state.
 #[derive(Clone)]
 pub struct Service {

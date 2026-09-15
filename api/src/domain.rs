@@ -31,10 +31,38 @@ impl Node {
     }
 }
 
+/// The two nodes the tests are written around, so an assertion can name one
+/// instead of repeating a 66-char key and its alias.
 #[cfg(test)]
 impl Node {
     pub const ACINQ: &str = "03864ef025fde8fb587d989186ce6a4a186895ee44a926bfc370e2c366597a3f8f";
     pub const WOS: &str = "035e4ff418fc8b5554c5d9eea66396c227bd429a3251c8cbc711002ba215bfc226";
+
+    pub fn acinq(satoshis: i64, first_seen: OffsetDateTime) -> Self {
+        Self::fixture(Self::ACINQ, "ACINQ", satoshis, first_seen)
+    }
+
+    pub fn wos(satoshis: i64, first_seen: OffsetDateTime) -> Self {
+        Self::fixture(Self::WOS, "WalletOfSatoshi.com", satoshis, first_seen)
+    }
+
+    /// The same node under another name, for the cases that are about an alias
+    /// changing rather than about which node it is.
+    pub fn with_alias(self, alias: String) -> Self {
+        Self {
+            alias: alias.to_string(),
+            ..self
+        }
+    }
+
+    fn fixture(public_key: &str, alias: &str, satoshis: i64, first_seen: OffsetDateTime) -> Self {
+        Self {
+            public_key: public_key.parse().expect("a valid public key"),
+            alias: alias.to_string(),
+            capacity: Self::capacity_from_satoshis(satoshis),
+            first_seen,
+        }
+    }
 }
 
 impl TryFrom<mempool::Node> for Node {

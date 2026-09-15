@@ -28,10 +28,11 @@ impl SyncHandler {
 mod tests {
     use std::sync::Arc;
 
+    use time::macros::datetime;
+
     use super::*;
     use crate::{
         domain::Node, error::Error, repository::MockNodeRepository, source::MockNodeSource,
-        testing::node,
     };
 
     #[tokio::test]
@@ -39,8 +40,8 @@ mod tests {
         let mut source = MockNodeSource::new();
         source.expect_fetch_nodes().times(1).returning(|| {
             Ok(vec![
-                node(Node::ACINQ, "ACINQ", 36_010_516_297),
-                node(Node::WOS, "WalletOfSatoshi.com", 1),
+                Node::acinq(36_010_516_297, datetime!(2018-04-05 15:13:42 UTC)),
+                Node::wos(1, datetime!(2018-04-05 15:13:42 UTC)),
             ])
         });
 

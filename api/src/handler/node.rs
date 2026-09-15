@@ -29,7 +29,7 @@ mod tests {
     use time::macros::datetime;
 
     use super::*;
-    use crate::{domain::Node, error::Error, repository::MockNodeRepository, testing::node};
+    use crate::{domain::Node, error::Error, repository::MockNodeRepository};
 
     fn handler(db: MockNodeRepository) -> NodeHandler {
         NodeHandler { db: Arc::new(db) }
@@ -38,9 +38,12 @@ mod tests {
     #[tokio::test]
     async fn list_nodes_returns_what_the_repository_holds() {
         let mut db = MockNodeRepository::new();
-        db.expect_list()
-            .times(1)
-            .returning(|| Ok(vec![node(Node::ACINQ, "ACINQ", 36_010_516_297)]));
+        db.expect_list().times(1).returning(|| {
+            Ok(vec![Node::acinq(
+                36_010_516_297,
+                datetime!(2018-04-05 15:13:42 UTC),
+            )])
+        });
 
         let listed = handler(db).list_nodes().await.unwrap();
 
@@ -58,7 +61,7 @@ mod tests {
         db.expect_get()
             .withf(move |asked| *asked == key)
             .times(1)
-            .returning(|key| Ok(Some(node(&key.to_string(), "ACINQ", 1))));
+            .returning(|_| Ok(Some(Node::acinq(1, datetime!(2018-04-05 15:13:42 UTC)))));
 
         let found = handler(db).get_node(key).await.unwrap();
 
