@@ -45,17 +45,15 @@ impl NodeSource for MempoolClient {
         let ranking = self.fetch_nodes().await?;
         let fetched = ranking.len();
 
-        // One unusable entry — a key that isn't 33 hex-encoded bytes —
-        // shouldn't cost us the whole ranking, so it's dropped and
-        // logged.
         let nodes: Vec<_> = ranking
             .into_iter()
             .filter_map(|entry| {
-                let public_key = entry.public_key.clone();
-
                 Node::try_from(entry)
                     .inspect_err(|err| {
-                        tracing::warn!(%err, %public_key, "skipping an unusable node");
+                        // One unusable entry: a key that isn't 33 hex-encoded
+                        // bytes, it shouldn't cost us the whole ranking, so
+                        // it's dropped and logged.
+                        tracing::warn!(%err, "skipping an unusable node");
                     })
                     .ok()
             })

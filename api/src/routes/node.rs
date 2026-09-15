@@ -5,7 +5,7 @@ use axum::{
     routing::get,
 };
 
-use crate::{Service, domain::PublicKey, error::Result};
+use crate::{Service, domain::PublicKey, error::Result, routes::json_array};
 
 pub fn configure_router() -> Router<Service> {
     Router::new()
@@ -14,9 +14,12 @@ pub fn configure_router() -> Router<Service> {
 }
 
 /// Every stored node, largest capacity first.
+///
+/// The rows are written to the response as the database produces them, so
+/// neither this service nor the caller waits on the whole list.
 #[tracing::instrument(skip(state))]
 async fn list_nodes(State(state): State<Service>) -> Result<impl IntoResponse> {
-    state.handler.node.list_nodes().await.map(Json)
+    json_array(state.handler.node.list_nodes().await?).await
 }
 
 /// One node by its hex-encoded public key.
@@ -38,6 +41,7 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
     };
+    use futures_util::{StreamExt as _, stream};
     use time::macros::datetime;
     use tower::ServiceExt;
 
@@ -79,10 +83,13 @@ mod tests {
     async fn list_nodes_answers_the_documented_shape() {
         let mut db = MockNodeRepository::new();
         db.expect_list().returning(|| {
-            Ok(vec![Node::acinq(
-                36_010_516_297,
-                datetime!(2018-04-05 15:13:42 UTC),
-            )])
+            Ok(stream::once(async {
+                Ok(Node::acinq(
+                    36_010_516_297,
+                    datetime!(2018-04-05 15:13:42 UTC),
+                ))
+            })
+            .boxed())
         });
 
         let (status, body) = get(db, "/nodes").await;

@@ -22,8 +22,25 @@
         PGUSER = "postgres";
         PGDATABASE = "lightning";
         RUST_LOG = "info";
-        DIESEL_CONFIG_FILE = "${builtins.getEnv "PWD"}/api/diesel.toml";
       };
+
+      # Planner settings for the dev database. `enable_seqscan = off`
+      # makes the planner charge an absurd cost for a sequential scan, so a
+      # query that has no index to use is slow here rather than quietly fine
+      # on a table small enough not to care. It discourages, never forbids:
+      # with no usable index Postgres still scans the table.
+      postgresSettings = {
+        enable_seqscan = "off";
+      };
+
+      # Applied to the database rather than passed to the server: it reaches a
+      # cluster that is already up, without a restart that would drop whatever
+      # is connected to it. New sessions pick it up.
+      applySettings = lib.concatStringsSep "\n" (
+        lib.mapAttrsToList
+        (name: value: ''psql -qtAX -c "ALTER DATABASE \"$PGDATABASE\" SET ${name} = ${value};"'')
+        postgresSettings
+      );
 
       # Substituted here rather than left as ${...} for dotenvy: nix knows the
       # values, so the file that lands in the checkout is already resolved.
@@ -59,11 +76,16 @@
             pg_ctl start --wait --silent --log "$PGDATA/postgres.log" \
               --options "-p $PGPORT -k $PGDATA -h $PGHOST"
 
-          # Create db
+          export DIESEL_CONFIG_FILE="$PWD/api/diesel.toml"
+
+          # Create db.
           diesel setup
 
           # Run migrations
           diesel migration run
+
+          # Planner settings
+          ${applySettings}
         '';
       };
     });

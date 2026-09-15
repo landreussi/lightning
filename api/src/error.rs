@@ -21,6 +21,9 @@ pub enum Error {
     #[error(transparent)]
     InvalidPublicKey(#[from] secp256k1::Error),
 
+    #[error("serialising a node: {0}")]
+    Serialization(#[from] serde_json::Error),
+
     #[error("resource not found")]
     NotFound,
 }
@@ -28,7 +31,7 @@ pub enum Error {
 impl Error {
     const fn status(&self) -> StatusCode {
         match self {
-            Self::Postgres(_) | Self::Pool(_) | Self::Mempool(_) => {
+            Self::Postgres(_) | Self::Pool(_) | Self::Mempool(_) | Self::Serialization(_) => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
             Self::InvalidPublicKey(_) => StatusCode::BAD_REQUEST,

@@ -1,3 +1,5 @@
+use futures_util::stream::BoxStream;
+
 use crate::{
     domain::{Node, PublicKey},
     error::{OptionExt, Result},
@@ -11,8 +13,10 @@ pub struct NodeHandler {
 }
 
 impl NodeHandler {
+    /// The stored nodes, streamed: the use case forwards the rows as the
+    /// repository produces them instead of holding the whole ranking.
     #[tracing::instrument(skip(self))]
-    pub async fn list_nodes(&self) -> Result<Vec<Node>> {
+    pub async fn list_nodes(&self) -> Result<BoxStream<'static, Result<Node>>> {
         self.db.list().await
     }
 
@@ -26,6 +30,7 @@ impl NodeHandler {
 mod tests {
     use std::sync::Arc;
 
+    use futures_util::{StreamExt as _, TryStreamExt as _, stream};
     use time::macros::datetime;
 
     use super::*;
@@ -39,13 +44,22 @@ mod tests {
     async fn list_nodes_returns_what_the_repository_holds() {
         let mut db = MockNodeRepository::new();
         db.expect_list().times(1).returning(|| {
-            Ok(vec![Node::acinq(
-                36_010_516_297,
-                datetime!(2018-04-05 15:13:42 UTC),
-            )])
+            Ok(stream::once(async {
+                Ok(Node::acinq(
+                    36_010_516_297,
+                    datetime!(2018-04-05 15:13:42 UTC),
+                ))
+            })
+            .boxed())
         });
 
-        let listed = handler(db).list_nodes().await.unwrap();
+        let listed: Vec<Node> = handler(db)
+            .list_nodes()
+            .await
+            .unwrap()
+            .try_collect()
+            .await
+            .unwrap();
 
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].alias, "ACINQ");

@@ -1,3 +1,4 @@
+use async_stream::try_stream;
 use diesel::{
     deserialize::{self, FromSql, FromSqlRow},
     expression::AsExpression,
@@ -8,6 +9,7 @@ use diesel::{
     upsert::excluded,
 };
 use diesel_async::RunQueryDsl;
+use futures_util::{TryStreamExt as _, stream::BoxStream};
 
 use crate::{
     domain::{Node, PublicKey},
@@ -84,16 +86,23 @@ impl NodeRepository for PostgresRepository {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn list(&self) -> Result<Vec<Node>> {
+    async fn list(&self) -> Result<BoxStream<'static, Result<Node>>> {
+        // Checked out here rather than inside the stream so a database that
+        // is down is an error the caller can still turn into a status code.
+        // The connection is then held for as long as the stream lives.
         let mut conn = self.pool.get().await?;
 
-        let nodes = nodes::table
-            .select(Node::as_select())
-            .order(nodes::capacity.desc())
-            .load(&mut conn)
-            .await?;
+        Ok(Box::pin(try_stream! {
+            let mut rows = nodes::table
+                .select(Node::as_select())
+                .order(nodes::capacity.desc())
+                .load_stream(&mut conn)
+                .await?;
 
-        Ok(nodes)
+            while let Some(node) = rows.try_next().await? {
+                yield node;
+            }
+        }))
     }
 
     #[tracing::instrument(skip(self))]
@@ -179,7 +188,7 @@ mod tests {
         .await
         .unwrap();
 
-        let listed = repo.list().await.unwrap();
+        let listed: Vec<Node> = repo.list().await.unwrap().try_collect().await.unwrap();
         let capacities: Vec<_> = listed.iter().map(|node| node.capacity).collect();
 
         assert!(capacities.windows(2).all(|pair| pair[0] >= pair[1]));
