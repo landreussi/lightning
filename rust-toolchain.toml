@@ -1,0 +1,5 @@
+[toolchain]
+# Nightly, because `rustfmt.toml` asks for import grouping/granularity and
+# comment wrapping, and rustfmt only honours those on nightly.
+channel = "nightly"
+components = ["rustfmt", "clippy", "rust-analyzer"]
