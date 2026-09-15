@@ -22,6 +22,7 @@
         PGUSER = "postgres";
         PGDATABASE = "lightning";
         RUST_LOG = "info";
+        DIESEL_CONFIG_FILE = "${builtins.getEnv "PWD"}/api/diesel.toml";
       };
 
       # Substituted here rather than left as ${...} for dotenvy: nix knows the
@@ -47,7 +48,6 @@
         shellHook = ''
           # Generate dotenv
           install -m 644 ${envFile} .env
-          . ./.env
 
           # Init db
           export PGDATA="$PWD/.pg"

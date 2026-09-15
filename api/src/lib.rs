@@ -20,7 +20,6 @@ pub mod error;
 pub mod handler;
 pub mod repository;
 pub mod routes;
-pub mod schema;
 pub mod source;
 
 /// Everything a request needs, handed to the routes as axum state.

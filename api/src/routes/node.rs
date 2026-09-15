@@ -91,10 +91,10 @@ mod tests {
         assert_eq!(
             body,
             serde_json::json!([{
-                "public_key": Node::ACINQ,
+                "publicKey": Node::ACINQ,
                 "alias": "ACINQ",
                 "capacity": "360.10516297",
-                "first_seen": "2018-04-05T15:13:42Z",
+                "firstSeen": "2018-04-05T15:13:42Z",
             }])
         );
     }
@@ -108,7 +108,7 @@ mod tests {
         let (status, body) = get(db, &format!("/nodes/{}", Node::ACINQ)).await;
 
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["public_key"], Node::ACINQ);
+        assert_eq!(body["publicKey"], Node::ACINQ);
     }
 
     #[tokio::test]

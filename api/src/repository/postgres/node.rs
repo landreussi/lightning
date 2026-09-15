@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use diesel::{
     deserialize::{self, FromSql, FromSqlRow},
     expression::AsExpression,
@@ -14,8 +12,7 @@ use diesel_async::RunQueryDsl;
 use crate::{
     domain::{Node, PublicKey},
     error::Result,
-    repository::{NodeRepository, postgres::PostgresRepository},
-    schema::nodes,
+    repository::{NodeRepository, postgres::PostgresRepository, schema::nodes},
 };
 
 /// The `BYTEA` side of a [`PublicKey`].
@@ -64,87 +61,66 @@ impl FromSql<Bytea, Pg> for DbPublicKey {
 impl NodeRepository for PostgresRepository {
     #[tracing::instrument(skip(self, nodes), fields(count = nodes.len()))]
     async fn upsert_many(&self, nodes: Vec<Node>) -> Result<usize> {
-        // `ON CONFLICT DO UPDATE` refuses to touch the same row twice in one
-        // statement, so a batch that repeats a public key would fail as a
-        // whole. Keep one entry per key instead.
-        let rows: Vec<Node> = nodes
-            .into_iter()
-            .map(|node| (node.public_key, node))
-            .collect::<HashMap<_, _>>()
-            .into_values()
-            .collect();
-
-        if rows.is_empty() {
+        if nodes.is_empty() {
             return Ok(0);
         }
 
-        self.with_conn(async move |conn| {
-            diesel::insert_into(nodes::table)
-                .values(rows)
-                .on_conflict(nodes::public_key)
-                .do_update()
-                .set((
-                    nodes::alias.eq(excluded(nodes::alias)),
-                    nodes::capacity.eq(excluded(nodes::capacity)),
-                    nodes::first_seen.eq(excluded(nodes::first_seen)),
-                    nodes::synced_at.eq(diesel::dsl::now),
-                ))
-                .execute(conn)
-                .await
-        })
-        .await
+        let mut conn = self.pool.get().await?;
+
+        let rows = diesel::insert_into(nodes::table)
+            .values(nodes)
+            .on_conflict(nodes::public_key)
+            .do_update()
+            .set((
+                nodes::alias.eq(excluded(nodes::alias)),
+                nodes::capacity.eq(excluded(nodes::capacity)),
+                nodes::first_seen.eq(excluded(nodes::first_seen)),
+                nodes::synced_at.eq(diesel::dsl::now),
+            ))
+            .execute(&mut conn)
+            .await?;
+
+        Ok(rows)
     }
 
     #[tracing::instrument(skip(self))]
     async fn list(&self) -> Result<Vec<Node>> {
-        self.with_conn(async move |conn| {
-            nodes::table
-                .select(Node::as_select())
-                .order(nodes::capacity.desc())
-                .load(conn)
-                .await
-        })
-        .await
+        let mut conn = self.pool.get().await?;
+
+        let nodes = nodes::table
+            .select(Node::as_select())
+            .order(nodes::capacity.desc())
+            .load(&mut conn)
+            .await?;
+
+        Ok(nodes)
     }
 
     #[tracing::instrument(skip(self))]
     async fn get(&self, public_key: PublicKey) -> Result<Option<Node>> {
-        self.with_conn(async move |conn| {
-            nodes::table
-                .find(public_key.serialize().to_vec())
-                .select(Node::as_select())
-                .first(conn)
-                .await
-                .optional()
-        })
-        .await
+        let mut conn = self.pool.get().await?;
+
+        let node = nodes::table
+            .find(public_key.serialize().to_vec())
+            .select(Node::as_select())
+            .first(&mut conn)
+            .await
+            .optional()?;
+
+        Ok(node)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use time::{OffsetDateTime, macros::datetime};
-
     use super::*;
-    use crate::{domain::Node, repository::postgres::PostgresRepositoryBuilder};
+    use crate::{error::Error, repository::postgres::TestPostgresRepository};
 
-    /// Every fixture shares one first-seen date; these tests are about the
-    /// rows, not about the timestamp.
-    const FIRST_SEEN: OffsetDateTime = datetime!(2018-04-05 15:13:42 UTC);
-
-    fn repo() -> PostgresRepository {
-        // The tests read the same `.env` the binaries do.
-        dotenvy::dotenv().ok();
-
-        PostgresRepositoryBuilder::from_env()
-            .expect("DATABASE_URL to be set")
-            .build()
-            .expect("the pool to build")
-    }
+    const FIRST_SEEN: time::OffsetDateTime = time::macros::datetime!(2018-04-05 15:13:42 UTC);
 
     #[tokio::test]
     async fn upsert_many_writes_then_updates_in_place() {
-        let repo = repo();
+        let repo = TestPostgresRepository::new().await;
 
         assert_eq!(
             repo.upsert_many(vec![Node::acinq(36_010_516_297, FIRST_SEEN)])
@@ -177,31 +153,25 @@ mod tests {
         assert_eq!(stored.capacity.to_string(), "0.00000001");
     }
 
-    /// A batch that repeats a key is accepted rather than failing outright.
+    /// `ON CONFLICT DO UPDATE` refuses to touch the same row twice in one
+    /// statement, so a batch is the caller's to deduplicate: a repeated key
+    /// fails the whole write rather than half-applying it.
     #[tokio::test]
-    async fn upsert_many_tolerates_a_repeated_key() {
-        let repo = repo();
-
-        let written = repo
+    async fn upsert_many_rejects_a_repeated_key() {
+        let result = TestPostgresRepository::new()
+            .await
             .upsert_many(vec![
                 Node::wos(1, FIRST_SEEN).with_alias("first".to_string()),
                 Node::wos(2, FIRST_SEEN).with_alias("second".to_string()),
             ])
-            .await
-            .unwrap();
+            .await;
 
-        assert_eq!(written, 1);
-        assert!(
-            repo.get(Node::WOS.parse().unwrap())
-                .await
-                .unwrap()
-                .is_some()
-        );
+        assert!(matches!(result, Err(Error::Postgres(_))));
     }
 
     #[tokio::test]
     async fn list_orders_by_capacity() {
-        let repo = repo();
+        let repo = TestPostgresRepository::new().await;
         repo.upsert_many(vec![
             Node::acinq(36_010_516_297, FIRST_SEEN),
             Node::wos(1, FIRST_SEEN),
@@ -217,12 +187,33 @@ mod tests {
 
     #[tokio::test]
     async fn get_answers_none_for_an_unknown_key() {
-        // The generator point: a valid key, and not one a node would use.
-        let unknown: PublicKey =
-            "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
-                .parse()
-                .unwrap();
+        let unknown: PublicKey = Node::UNKNOWN.parse().unwrap();
 
-        assert!(repo().get(unknown).await.unwrap().is_none());
+        assert!(
+            TestPostgresRepository::new()
+                .await
+                .get(unknown)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    /// The isolation itself: a repository sees its own writes, and dropping it
+    /// takes them with it. Without this, a test would leave rows behind for
+    /// the next one to trip over.
+    #[tokio::test]
+    async fn writes_are_rolled_back_once_the_repository_is_dropped() {
+        let key: PublicKey = Node::UNKNOWN.parse().unwrap();
+
+        let repo = TestPostgresRepository::new().await;
+        repo.upsert_many(vec![Node::unknown(1, FIRST_SEEN)])
+            .await
+            .unwrap();
+        assert!(repo.get(key).await.unwrap().is_some());
+        drop(repo);
+
+        let other_repo = TestPostgresRepository::new().await;
+        assert!(other_repo.get(key).await.unwrap().is_none());
     }
 }

@@ -6,8 +6,7 @@
 //! [mempool.space]: https://mempool.space/docs/api/rest
 
 pub mod error;
-
-pub use error::{Error, Result};
+pub use error::*;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -73,23 +72,9 @@ impl MempoolClient {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::{Value, json};
-
     use super::*;
 
-    /// One entry as mempool.space actually sends it, unused fields included.
-    fn acinq() -> Value {
-        json!({
-            "publicKey": "03864ef025fde8fb587d989186ce6a4a186895ee44a926bfc370e2c366597a3f8f",
-            "alias": "ACINQ",
-            "channels": 2908,
-            "capacity": 36_010_516_297i64,
-            "firstSeen": 1_522_941_222,
-            "updatedAt": 1_661_274_935,
-            "city": null,
-            "country": { "en": "United States", "pt-BR": "EUA" }
-        })
-    }
+    const ACINQ_KEY: &str = "03864ef025fde8fb587d989186ce6a4a186895ee44a926bfc370e2c366597a3f8f";
 
     fn client(server: &mockito::Server) -> MempoolClient {
         MempoolClient::new(server.url().parse().expect("a valid endpoint"))
@@ -98,11 +83,21 @@ mod tests {
     #[tokio::test]
     async fn connectivity_ranking_parses_the_payload() {
         let mut server = mockito::Server::new_async().await;
+        let acinq_only = serde_json::json!([{
+            "publicKey": ACINQ_KEY,
+            "alias": "ACINQ",
+            "channels": 2908,
+            "capacity": 36_010_516_297i64,
+            "firstSeen": 1_522_941_222,
+            "updatedAt": 1_661_274_935,
+            "city": null,
+            "country": { "en": "United States", "pt-BR": "EUA" }
+        }]);
         let mock = server
             .mock("GET", "/")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(json!([acinq()]).to_string())
+            .with_body(acinq_only.to_string())
             .create_async()
             .await;
 
@@ -112,8 +107,7 @@ mod tests {
         assert_eq!(
             nodes,
             vec![Node {
-                public_key: "03864ef025fde8fb587d989186ce6a4a186895ee44a926bfc370e2c366597a3f8f"
-                    .to_string(),
+                public_key: ACINQ_KEY.to_string(),
                 alias: "ACINQ".to_string(),
                 capacity: 36_010_516_297,
                 first_seen: time::macros::datetime!(2018-04-05 15:13:42 UTC),

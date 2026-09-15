@@ -6,6 +6,7 @@ use crate::{
 };
 
 pub mod postgres;
+pub mod schema;
 
 pub type SharedNodeRepository = Arc<dyn NodeRepository + Send + Sync + 'static>;
 

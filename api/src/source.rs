@@ -48,7 +48,7 @@ impl NodeSource for MempoolClient {
         // One unusable entry — a key that isn't 33 hex-encoded bytes —
         // shouldn't cost us the whole ranking, so it's dropped and
         // logged.
-        let nodes: Vec<Node> = ranking
+        let nodes: Vec<_> = ranking
             .into_iter()
             .filter_map(|entry| {
                 let public_key = entry.public_key.clone();

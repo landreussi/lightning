@@ -12,10 +12,10 @@ GET /health
 ```json
 [
   {
-    "public_key": "03864ef025fde8fb587d989186ce6a4a186895ee44a926bfc370e2c366597a3f8f",
+    "publicKey": "03864ef025fde8fb587d989186ce6a4a186895ee44a926bfc370e2c366597a3f8f",
     "alias": "ACINQ",
     "capacity": "360.10516297",
-    "first_seen": "2018-04-05T15:13:42Z"
+    "firstSeen": "2018-04-05T15:13:42Z"
   }
 ]
 ```
@@ -71,7 +71,7 @@ migrations with [`diesel_cli`](https://diesel.rs/guides/getting-started):
 ```sh
 cp .env.example .env && $EDITOR .env
 cargo install diesel_cli --no-default-features --features postgres
-diesel setup                   # creates the database, then migrates it
+cd api && diesel setup         # creates the database, then migrates it
 ```
 
 Then, either way:
@@ -136,6 +136,8 @@ until cron fires again. Per-node results and a retry would be the fix.
 
 ## Is there any other information you'd like us to know?
 
-`api/src/schema.rs` is `diesel print-schema` output and is checked against
-the migrations; regenerate it with `diesel print-schema > api/src/schema.rs`
-after adding one.
+`api/src/repository/schema.rs` is `diesel print-schema` output and is checked
+against the migrations, which live in `api/migrations` next to the crate that
+owns them. `diesel migration run` rewrites the schema itself; both paths come
+from `api/diesel.toml` and resolve relative to it, so run the CLI from `api/`
+or point `DIESEL_CONFIG_FILE` at that file — which is what `nix develop` does.
