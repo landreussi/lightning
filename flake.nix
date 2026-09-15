@@ -26,7 +26,7 @@
 
       # Substituted here rather than left as ${...} for dotenvy: nix knows the
       # values, so the file that lands in the checkout is already resolved.
-      databaseUrl = "postgres://${env.PGUSER}@${env.PGHOST}:${env.PGPORT}/${env.PGDATABASE}";
+      databaseUrl = with env; "postgres://${PGUSER}@${PGHOST}:${PGPORT}/${PGDATABASE}";
 
       envFile = pkgs.writeText "dot-env" (lib.concatStringsSep "\n" (
         lib.mapAttrsToList (name: value: "${name}=${value}") env
@@ -41,6 +41,8 @@
           postgresql
           diesel-cli
         ];
+
+        env = env;
 
         shellHook = ''
           # Generate dotenv

@@ -1,14 +1,28 @@
+use diesel::{Insertable, Queryable, Selectable};
 use rust_decimal::Decimal;
 pub use secp256k1::PublicKey;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
+use crate::repository::postgres::node::DbPublicKey;
+
 /// How many decimal places a satoshi amount has once expressed in BTC.
 const SATOSHI_SCALE: u32 = 8;
 
 /// A lightning node as this service stores and serves it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// One type for all three sides of a node: the JSON the API answers with, the
+/// row of `nodes`, and what [`TryFrom<mempool::Node>`] builds out of the
+/// upstream payload.
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Insertable, Queryable, Selectable,
+)]
+#[diesel(table_name = crate::schema::nodes)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct Node {
+    /// Stored as the raw 33 bytes, which is what the `BYTEA` column and its
+    /// `octet_length` check expect.
+    #[diesel(serialize_as = DbPublicKey, deserialize_as = DbPublicKey)]
     pub public_key: PublicKey,
 
     pub alias: String,
@@ -28,6 +42,19 @@ impl Node {
     /// Exact: it only moves the decimal point, it doesn't divide.
     pub fn capacity_from_satoshis(satoshis: i64) -> Decimal {
         Decimal::new(satoshis, SATOSHI_SCALE)
+    }
+}
+
+impl TryFrom<mempool::Node> for Node {
+    type Error = secp256k1::Error;
+
+    fn try_from(ranking: mempool::Node) -> Result<Self, Self::Error> {
+        Ok(Self {
+            public_key: ranking.public_key.parse()?,
+            alias: ranking.alias,
+            capacity: Self::capacity_from_satoshis(ranking.capacity),
+            first_seen: ranking.first_seen,
+        })
     }
 }
 
@@ -62,19 +89,6 @@ impl Node {
             capacity: Self::capacity_from_satoshis(satoshis),
             first_seen,
         }
-    }
-}
-
-impl TryFrom<mempool::Node> for Node {
-    type Error = secp256k1::Error;
-
-    fn try_from(ranking: mempool::Node) -> Result<Self, Self::Error> {
-        Ok(Self {
-            public_key: ranking.public_key.parse()?,
-            alias: ranking.alias,
-            capacity: Self::capacity_from_satoshis(ranking.capacity),
-            first_seen: ranking.first_seen,
-        })
     }
 }
 

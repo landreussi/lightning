@@ -1,9 +1,15 @@
 use std::collections::HashMap;
 
-use diesel::{Selectable, prelude::*, upsert::excluded};
+use diesel::{
+    deserialize::{self, FromSql, FromSqlRow},
+    expression::AsExpression,
+    pg::{Pg, PgValue},
+    prelude::*,
+    serialize::{self, IsNull, Output, ToSql},
+    sql_types::Bytea,
+    upsert::excluded,
+};
 use diesel_async::RunQueryDsl;
-use rust_decimal::Decimal;
-use time::OffsetDateTime;
 
 use crate::{
     domain::{Node, PublicKey},
@@ -12,40 +18,45 @@ use crate::{
     schema::nodes,
 };
 
-/// A row of `nodes`, minus the columns Postgres maintains itself.
-#[derive(Debug, Insertable, Queryable, Selectable)]
-#[diesel(table_name = nodes)]
-#[diesel(check_for_backend(diesel::pg::Pg))]
-struct NodeRow {
-    public_key: Vec<u8>,
-    alias: String,
-    capacity: Decimal,
-    first_seen: OffsetDateTime,
-}
+/// The `BYTEA` side of a [`PublicKey`].
+///
+/// Diesel can't map the key type to a column on its own — the trait and the
+/// type are both foreign, so neither `ToSql` nor `FromSql` can be implemented
+/// for it here. The column goes through this instead, which is what
+/// [`Node`]'s `serialize_as`/`deserialize_as` name.
+#[derive(Debug, AsExpression, FromSqlRow)]
+#[diesel(sql_type = Bytea)]
+pub struct DbPublicKey(PublicKey);
 
-impl From<Node> for NodeRow {
-    fn from(node: Node) -> Self {
-        Self {
-            public_key: node.public_key.serialize().to_vec(),
-            alias: node.alias,
-            capacity: node.capacity,
-            first_seen: node.first_seen,
-        }
+impl From<PublicKey> for DbPublicKey {
+    fn from(public_key: PublicKey) -> Self {
+        Self(public_key)
     }
 }
 
-impl TryFrom<NodeRow> for Node {
-    type Error = crate::error::Error;
+impl From<DbPublicKey> for PublicKey {
+    fn from(stored: DbPublicKey) -> Self {
+        stored.0
+    }
+}
 
-    fn try_from(row: NodeRow) -> Result<Self> {
-        Ok(Self {
-            // The column is `CHECK (octet_length(public_key) = 33)`, so this
-            // only trips if something wrote around the constraint.
-            public_key: PublicKey::from_slice(&row.public_key)?,
-            alias: row.alias,
-            capacity: row.capacity,
-            first_seen: row.first_seen,
-        })
+impl ToSql<Bytea, Pg> for DbPublicKey {
+    fn to_sql(&self, out: &mut Output<'_, '_, Pg>) -> serialize::Result {
+        use std::io::Write as _;
+
+        out.write_all(&self.0.serialize())?;
+
+        Ok(IsNull::No)
+    }
+}
+
+impl FromSql<Bytea, Pg> for DbPublicKey {
+    fn from_sql(bytes: PgValue<'_>) -> deserialize::Result<Self> {
+        // The column is `CHECK (octet_length(public_key) = 33)`, so this only
+        // trips if something wrote around the constraint.
+        PublicKey::from_slice(bytes.as_bytes())
+            .map(Self)
+            .map_err(Into::into)
     }
 }
 
@@ -56,12 +67,11 @@ impl NodeRepository for PostgresRepository {
         // `ON CONFLICT DO UPDATE` refuses to touch the same row twice in one
         // statement, so a batch that repeats a public key would fail as a
         // whole. Keep one entry per key instead.
-        let rows: Vec<NodeRow> = nodes
+        let rows: Vec<Node> = nodes
             .into_iter()
             .map(|node| (node.public_key, node))
             .collect::<HashMap<_, _>>()
             .into_values()
-            .map(NodeRow::from)
             .collect();
 
         if rows.is_empty() {
@@ -70,7 +80,7 @@ impl NodeRepository for PostgresRepository {
 
         self.with_conn(async move |conn| {
             diesel::insert_into(nodes::table)
-                .values(&rows)
+                .values(rows)
                 .on_conflict(nodes::public_key)
                 .do_update()
                 .set((
@@ -87,39 +97,33 @@ impl NodeRepository for PostgresRepository {
 
     #[tracing::instrument(skip(self))]
     async fn list(&self) -> Result<Vec<Node>> {
-        let rows = self
-            .with_conn(async move |conn| {
-                nodes::table
-                    .select(NodeRow::as_select())
-                    .order(nodes::capacity.desc())
-                    .load(conn)
-                    .await
-            })
-            .await?;
-
-        rows.into_iter().map(Node::try_from).collect()
+        self.with_conn(async move |conn| {
+            nodes::table
+                .select(Node::as_select())
+                .order(nodes::capacity.desc())
+                .load(conn)
+                .await
+        })
+        .await
     }
 
     #[tracing::instrument(skip(self))]
     async fn get(&self, public_key: PublicKey) -> Result<Option<Node>> {
-        let row = self
-            .with_conn(async move |conn| {
-                nodes::table
-                    .find(public_key.serialize().to_vec())
-                    .select(NodeRow::as_select())
-                    .first(conn)
-                    .await
-                    .optional()
-            })
-            .await?;
-
-        row.map(Node::try_from).transpose()
+        self.with_conn(async move |conn| {
+            nodes::table
+                .find(public_key.serialize().to_vec())
+                .select(Node::as_select())
+                .first(conn)
+                .await
+                .optional()
+        })
+        .await
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use time::macros::datetime;
+    use time::{OffsetDateTime, macros::datetime};
 
     use super::*;
     use crate::{domain::Node, repository::postgres::PostgresRepositoryBuilder};
