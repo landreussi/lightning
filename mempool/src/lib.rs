@@ -57,11 +57,11 @@ impl MempoolClient {
     pub async fn fetch_nodes(&self) -> Result<Vec<Node>> {
         let nodes = self
             .http
-            .get(self.endpoint.clone())
+            .get(self.endpoint.as_str())
             .send()
             .await?
             .error_for_status()?
-            .json::<Vec<Node>>()
+            .json::<Vec<_>>()
             .await?;
 
         tracing::debug!(count = nodes.len(), "fetched mempool nodes");
